@@ -17,6 +17,8 @@ export type Video = {
   category: string;
   duration: string;
   featured: boolean;
+  is_locked: boolean;
+  project_password: string;
   created_at: string;
 };
 

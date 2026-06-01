@@ -69,8 +69,8 @@ export default function Hero({ onExplore }: HeroProps) {
         {/* Stats */}
         <div className="mt-20 grid grid-cols-3 gap-6 max-w-lg mx-auto">
           {[
-            { value: "500+", label: "Projects" },
-            { value: "5 yrs", label: "Experience" },
+            { value: "100+", label: "Projects" },
+            { value: "1 yr", label: "Experience" },
             { value: "100%", label: "Satisfaction" },
           ].map((stat) => (
             <div key={stat.label} className="text-center">
