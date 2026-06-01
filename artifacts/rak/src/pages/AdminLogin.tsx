@@ -1,7 +1,13 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
-import { Lock, Mail, Eye, EyeOff, Loader2, AlertCircle } from "lucide-react";
+import { Lock, Mail, Eye, EyeOff, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+
+type Step = {
+  label: string;
+  status: "pending" | "running" | "ok" | "fail";
+  detail?: string;
+};
 
 export default function AdminLogin() {
   const { signIn, isAdmin } = useAuth();
@@ -11,27 +17,64 @@ export default function AdminLogin() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [steps, setSteps] = useState<Step[]>([]);
 
-  // Only redirect once we know the user IS an admin — never block on loading
   useEffect(() => {
-    if (isAdmin) {
-      setLocation("/admin/dashboard");
-    }
+    if (isAdmin) setLocation("/admin/dashboard");
   }, [isAdmin, setLocation]);
+
+  function setStepStatus(
+    index: number,
+    status: Step["status"],
+    detail?: string
+  ) {
+    setSteps((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], status, detail };
+      return next;
+    });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErrorMsg(null);
+
+    const initialSteps: Step[] = [
+      { label: "Connecting to Supabase Auth", status: "pending" },
+      { label: "Verifying admin access", status: "pending" },
+    ];
+    setSteps(initialSteps);
     setSubmitting(true);
+
     try {
-      const { error } = await signIn(email, password);
+      // Show step 1 running
+      setStepStatus(0, "running");
+
+      const { error, step } = await signIn(email, password);
+
       if (error) {
+        // Mark the failing step
+        if (step === "supabase_auth") {
+          setStepStatus(0, "fail", error);
+          setStepStatus(1, "pending");
+        } else if (step === "admins_query" || step === "not_admin") {
+          setStepStatus(0, "ok");
+          setStepStatus(1, "fail", error);
+        } else {
+          setStepStatus(0, "fail", error);
+        }
         setErrorMsg(error);
-      } else {
-        setLocation("/admin/dashboard");
+        return;
       }
+
+      // Success
+      setStepStatus(0, "ok");
+      setStepStatus(1, "ok", "Admin verified");
+      setLocation("/admin/dashboard");
     } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : "An unexpected error occurred.");
+      const msg = err instanceof Error ? err.message : "An unexpected error occurred.";
+      setErrorMsg(msg);
+      setStepStatus(0, "fail", msg);
     } finally {
       setSubmitting(false);
     }
@@ -45,6 +88,7 @@ export default function AdminLogin() {
         style={{ background: "radial-gradient(circle, #f5c842, transparent)" }} />
 
       <div className="w-full max-w-md relative z-10">
+        {/* Logo */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl glass-card mb-4 gold-glow">
             <span className="text-2xl font-black gold-text">R</span>
@@ -64,6 +108,7 @@ export default function AdminLogin() {
             </div>
           </div>
 
+          {/* Error banner */}
           {errorMsg && (
             <div
               className="flex items-start gap-3 px-4 py-3 rounded-xl mb-6 text-sm"
@@ -71,7 +116,7 @@ export default function AdminLogin() {
               data-testid="login-error"
             >
               <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-              <span className="text-red-400">{errorMsg}</span>
+              <span className="text-red-400 break-all">{errorMsg}</span>
             </div>
           )}
 
@@ -83,7 +128,7 @@ export default function AdminLogin() {
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) => { setEmail(e.target.value); setErrorMsg(null); }}
+                  onChange={(e) => { setEmail(e.target.value); setErrorMsg(null); setSteps([]); }}
                   required
                   placeholder="admin@example.com"
                   data-testid="input-email"
@@ -104,7 +149,7 @@ export default function AdminLogin() {
                 <input
                   type={showPassword ? "text" : "password"}
                   value={password}
-                  onChange={(e) => { setPassword(e.target.value); setErrorMsg(null); }}
+                  onChange={(e) => { setPassword(e.target.value); setErrorMsg(null); setSteps([]); }}
                   required
                   placeholder="••••••••"
                   data-testid="input-password"
@@ -125,6 +170,43 @@ export default function AdminLogin() {
                 </button>
               </div>
             </div>
+
+            {/* Step-by-step progress shown while submitting or after failure */}
+            {steps.length > 0 && (
+              <div className="space-y-2 py-1" data-testid="login-steps">
+                {steps.map((s, i) => (
+                  <div key={i} className="flex items-center gap-3 text-xs">
+                    <div className="w-4 h-4 flex-shrink-0 flex items-center justify-center">
+                      {s.status === "running" && (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "var(--gold)" }} />
+                      )}
+                      {s.status === "ok" && (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+                      )}
+                      {s.status === "fail" && (
+                        <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                      )}
+                      {s.status === "pending" && (
+                        <div className="w-2 h-2 rounded-full bg-muted-foreground/30" />
+                      )}
+                    </div>
+                    <div>
+                      <span className={
+                        s.status === "ok" ? "text-green-400" :
+                        s.status === "fail" ? "text-red-400" :
+                        s.status === "running" ? "text-foreground" :
+                        "text-muted-foreground/50"
+                      }>
+                        {s.label}
+                      </span>
+                      {s.detail && s.status !== "ok" && (
+                        <p className="text-red-400/80 mt-0.5 break-all">{s.detail}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <button
               type="submit"

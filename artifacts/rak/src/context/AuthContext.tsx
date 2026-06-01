@@ -7,7 +7,7 @@ type AuthContextType = {
   session: Session | null;
   isAdmin: boolean;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  signIn: (email: string, password: string) => Promise<{ error: string | null; step?: string }>;
   signOut: () => Promise<void>;
 };
 
@@ -19,6 +19,16 @@ const AuthContext = createContext<AuthContextType>({
   signIn: async () => ({ error: null }),
   signOut: async () => {},
 });
+
+/** Wraps a promise with a hard timeout — rejects with a timeout error if exceeded */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timed out after ${ms / 1000}s: ${label}`)), ms)
+    ),
+  ]);
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -34,53 +44,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  async function checkAdmin(email: string | undefined): Promise<boolean> {
-    if (!email) {
-      setIsAdmin(false);
-      return false;
-    }
-    try {
-      const { data } = await supabase
-        .from("admins")
-        .select("id")
-        .eq("email", email)
-        .maybeSingle();
-      const result = !!data;
-      setIsAdmin(result);
-      return result;
-    } catch {
-      setIsAdmin(false);
-      return false;
-    }
-  }
-
   useEffect(() => {
-    // Safety timeout: if Supabase takes more than 4 seconds, unblock the UI
-    const timeout = setTimeout(() => {
-      markLoadingDone();
-    }, 4000);
+    // Hard timeout — UI is never blocked longer than 4 seconds on startup
+    const timeout = setTimeout(() => markLoadingDone(), 4000);
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      clearTimeout(timeout);
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user?.email) {
-        checkAdmin(session.user.email).finally(() => markLoadingDone());
-      } else {
-        // No session — unblock immediately, show login form
+    withTimeout(supabase.auth.getSession(), 5000, "getSession")
+      .then(({ data: { session } }) => {
+        clearTimeout(timeout);
+        setSession(session);
+        setUser(session?.user ?? null);
+        // Only query admins table if a session already exists (i.e. returning user)
+        if (session?.user?.email) {
+          withTimeout(
+            supabase.from("admins").select("id").eq("email", session.user.email).maybeSingle(),
+            5000,
+            "checkAdmin on load"
+          )
+            .then(({ data }) => setIsAdmin(!!data))
+            .catch(() => setIsAdmin(false))
+            .finally(() => markLoadingDone());
+        } else {
+          markLoadingDone();
+        }
+      })
+      .catch(() => {
+        clearTimeout(timeout);
         markLoadingDone();
-      }
-    }).catch(() => {
-      clearTimeout(timeout);
-      markLoadingDone();
-    });
+      });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
-      if (!session) {
-        setIsAdmin(false);
-      }
+      if (!session) setIsAdmin(false);
     });
 
     return () => {
@@ -89,32 +84,64 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  async function signIn(email: string, password: string): Promise<{ error: string | null }> {
+  async function signIn(
+    email: string,
+    password: string
+  ): Promise<{ error: string | null; step?: string }> {
+    // ── Step 1: Supabase Auth ────────────────────────────────────────────────
+    let authResult: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>;
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) return { error: authError.message };
-
-      const { data: adminData, error: adminError } = await supabase
-        .from("admins")
-        .select("id")
-        .eq("email", email)
-        .maybeSingle();
-
-      if (adminError) {
-        await supabase.auth.signOut();
-        return { error: "Could not verify admin access. Please try again." };
-      }
-
-      if (!adminData) {
-        await supabase.auth.signOut();
-        return { error: "Access denied. You are not an authorized admin." };
-      }
-
-      setIsAdmin(true);
-      return { error: null };
+      authResult = await withTimeout(
+        supabase.auth.signInWithPassword({ email, password }),
+        10000,
+        "signInWithPassword"
+      );
     } catch (err: unknown) {
-      return { error: err instanceof Error ? err.message : "An unexpected error occurred." };
+      return {
+        error: `Auth request timed out or failed: ${err instanceof Error ? err.message : String(err)}`,
+        step: "supabase_auth",
+      };
     }
+
+    if (authResult.error) {
+      return { error: authResult.error.message, step: "supabase_auth" };
+    }
+
+    // ── Step 2: Check admins table ───────────────────────────────────────────
+    let adminData: { id: string } | null = null;
+    try {
+      const result = await withTimeout(
+        supabase.from("admins").select("id").eq("email", email).maybeSingle(),
+        10000,
+        "admins table query"
+      );
+      if (result.error) {
+        await supabase.auth.signOut();
+        return {
+          error: `Admins table error: ${result.error.message} (code: ${result.error.code})`,
+          step: "admins_query",
+        };
+      }
+      adminData = result.data as { id: string } | null;
+    } catch (err: unknown) {
+      await supabase.auth.signOut();
+      return {
+        error: `Admins table request timed out: ${err instanceof Error ? err.message : String(err)}`,
+        step: "admins_query",
+      };
+    }
+
+    // ── Step 3: Verify admin exists ──────────────────────────────────────────
+    if (!adminData) {
+      await supabase.auth.signOut();
+      return {
+        error: "Access denied. This email is not registered as an admin.",
+        step: "not_admin",
+      };
+    }
+
+    setIsAdmin(true);
+    return { error: null, step: "success" };
   }
 
   async function signOut() {
