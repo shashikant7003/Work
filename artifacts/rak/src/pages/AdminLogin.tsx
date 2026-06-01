@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Lock, Mail, Eye, EyeOff, Loader2, AlertCircle } from "lucide-react";
 
 export default function AdminLogin() {
-  const { signIn, isAdmin, loading } = useAuth();
+  const { signIn, isAdmin } = useAuth();
   const [, setLocation] = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -12,11 +12,12 @@ export default function AdminLogin() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Only redirect once we know the user IS an admin — never block on loading
   useEffect(() => {
-    if (!loading && isAdmin) {
+    if (isAdmin) {
       setLocation("/admin/dashboard");
     }
-  }, [isAdmin, loading, setLocation]);
+  }, [isAdmin, setLocation]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,14 +35,6 @@ export default function AdminLogin() {
     } finally {
       setSubmitting(false);
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--gold)" }} />
-      </div>
-    );
   }
 
   return (
@@ -72,9 +65,11 @@ export default function AdminLogin() {
           </div>
 
           {errorMsg && (
-            <div className="flex items-start gap-3 px-4 py-3 rounded-xl mb-6 text-sm"
+            <div
+              className="flex items-start gap-3 px-4 py-3 rounded-xl mb-6 text-sm"
               style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}
-              data-testid="login-error">
+              data-testid="login-error"
+            >
               <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
               <span className="text-red-400">{errorMsg}</span>
             </div>

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { User, Session } from "@supabase/supabase-js";
 
@@ -15,7 +15,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   session: null,
   isAdmin: false,
-  loading: true,
+  loading: false,
   signIn: async () => ({ error: null }),
   signOut: async () => {},
 });
@@ -25,27 +25,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  const loadingDoneRef = useRef(false);
+
+  function markLoadingDone() {
+    if (!loadingDoneRef.current) {
+      loadingDoneRef.current = true;
+      setLoading(false);
+    }
+  }
 
   async function checkAdmin(email: string | undefined): Promise<boolean> {
     if (!email) {
       setIsAdmin(false);
       return false;
     }
-    const { data } = await supabase
-      .from("admins")
-      .select("id")
-      .eq("email", email)
-      .maybeSingle();
-    const result = !!data;
-    setIsAdmin(result);
-    return result;
+    try {
+      const { data } = await supabase
+        .from("admins")
+        .select("id")
+        .eq("email", email)
+        .maybeSingle();
+      const result = !!data;
+      setIsAdmin(result);
+      return result;
+    } catch {
+      setIsAdmin(false);
+      return false;
+    }
   }
 
   useEffect(() => {
+    // Safety timeout: if Supabase takes more than 4 seconds, unblock the UI
+    const timeout = setTimeout(() => {
+      markLoadingDone();
+    }, 4000);
+
     supabase.auth.getSession().then(({ data: { session } }) => {
+      clearTimeout(timeout);
       setSession(session);
       setUser(session?.user ?? null);
-      checkAdmin(session?.user?.email).finally(() => setLoading(false));
+      if (session?.user?.email) {
+        checkAdmin(session.user.email).finally(() => markLoadingDone());
+      } else {
+        // No session — unblock immediately, show login form
+        markLoadingDone();
+      }
+    }).catch(() => {
+      clearTimeout(timeout);
+      markLoadingDone();
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -56,7 +83,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function signIn(email: string, password: string): Promise<{ error: string | null }> {
