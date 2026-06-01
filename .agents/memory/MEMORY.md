@@ -1,0 +1,2 @@
+- [Supabase Vite injection](supabase-vite-injection.md) — Supabase secrets must be injected via vite.config.ts `define` block; .env files and artifact.toml env interpolation don't work reliably in this setup.
+- [RAK Supabase URL quirk](rak-supabase-url-quirk.md) — SUPABASE_URL secret is a publishable key, not an HTTPS URL; real URL derived from JWT and hardcoded as fallback.
