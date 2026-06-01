@@ -26,14 +26,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  async function checkAdmin(email: string | undefined) {
-    if (!email) { setIsAdmin(false); return; }
+  async function checkAdmin(email: string | undefined): Promise<boolean> {
+    if (!email) {
+      setIsAdmin(false);
+      return false;
+    }
     const { data } = await supabase
       .from("admins")
       .select("id")
       .eq("email", email)
       .maybeSingle();
-    setIsAdmin(!!data);
+    const result = !!data;
+    setIsAdmin(result);
+    return result;
   }
 
   useEffect(() => {
@@ -46,30 +51,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
-      checkAdmin(session?.user?.email);
+      if (!session) {
+        setIsAdmin(false);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  async function signIn(email: string, password: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return { error: error.message };
-    const { data: adminData } = await supabase
-      .from("admins")
-      .select("id")
-      .eq("email", email)
-      .maybeSingle();
-    if (!adminData) {
-      await supabase.auth.signOut();
-      return { error: "Access denied. You are not an authorized admin." };
+  async function signIn(email: string, password: string): Promise<{ error: string | null }> {
+    try {
+      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) return { error: authError.message };
+
+      const { data: adminData, error: adminError } = await supabase
+        .from("admins")
+        .select("id")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (adminError) {
+        await supabase.auth.signOut();
+        return { error: "Could not verify admin access. Please try again." };
+      }
+
+      if (!adminData) {
+        await supabase.auth.signOut();
+        return { error: "Access denied. You are not an authorized admin." };
+      }
+
+      setIsAdmin(true);
+      return { error: null };
+    } catch (err: unknown) {
+      return { error: err instanceof Error ? err.message : "An unexpected error occurred." };
     }
-    return { error: null };
   }
 
   async function signOut() {
     await supabase.auth.signOut();
     setIsAdmin(false);
+    setUser(null);
+    setSession(null);
   }
 
   return (
