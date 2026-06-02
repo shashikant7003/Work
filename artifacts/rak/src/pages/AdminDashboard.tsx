@@ -12,6 +12,44 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// ─── Input validation ─────────────────────────────────────────────────────────
+
+const YT_PATTERN = /^https?:\/\/(www\.)?(youtube\.com\/(watch\?v=|embed\/|shorts\/)|youtu\.be\/)[\w-]{11}/;
+const HTTPS_PATTERN = /^https?:\/\/.+/;
+const DURATION_PATTERN = /^\d{1,2}:\d{2}$/;
+
+type ValidationResult = { ok: true } | { ok: false; field: string; message: string };
+
+function validateVideoForm(form: VideoForm): ValidationResult {
+  const title = form.title.trim();
+  if (!title) return { ok: false, field: "title", message: "Title is required." };
+  if (title.length > 200) return { ok: false, field: "title", message: "Title must be 200 characters or fewer." };
+
+  if (!YT_PATTERN.test(form.youtube_url.trim())) {
+    return { ok: false, field: "youtube_url", message: "Enter a valid YouTube URL (youtube.com or youtu.be)." };
+  }
+
+  if (form.thumbnail_url.trim() && !HTTPS_PATTERN.test(form.thumbnail_url.trim())) {
+    return { ok: false, field: "thumbnail_url", message: "Thumbnail URL must start with https://." };
+  }
+
+  if (form.duration.trim() && !DURATION_PATTERN.test(form.duration.trim())) {
+    return { ok: false, field: "duration", message: "Duration must be in M:SS or MM:SS format (e.g. 3:45)." };
+  }
+
+  if (form.is_locked && !form.project_password.trim()) {
+    return { ok: false, field: "project_password", message: "Password is required when lock is enabled." };
+  }
+
+  if (form.project_password.length > 100) {
+    return { ok: false, field: "project_password", message: "Password must be 100 characters or fewer." };
+  }
+
+  return { ok: true };
+}
+
+// ─── Error extraction ─────────────────────────────────────────────────────────
+
 /** Extract a human-readable message from any thrown value, including PostgrestError */
 function extractError(err: unknown): string {
   if (!err) return "Unknown error";
@@ -227,6 +265,13 @@ export default function AdminDashboard() {
 
     if (schema.videosHasLock && form.is_locked && !form.project_password.trim()) {
       toast({ title: "Password required", description: "Set a password before locking this project.", variant: "destructive" });
+      return;
+    }
+
+    // Validate all inputs before touching the DB
+    const validation = validateVideoForm(form);
+    if (!validation.ok) {
+      toast({ title: "Validation error", description: validation.message, variant: "destructive" });
       return;
     }
 

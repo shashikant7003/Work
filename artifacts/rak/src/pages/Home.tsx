@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase, PUBLIC_VIDEO_COLUMNS } from "@/lib/supabase";
 import type { Video, Category } from "@/lib/supabase";
 import Navbar from "@/components/Navbar";
 import Hero from "@/components/Hero";
@@ -20,8 +20,9 @@ export default function Home() {
   useEffect(() => {
     async function fetchData() {
       const [videosRes, categoriesRes] = await Promise.all([
-        supabase.from("videos").select("*").order("created_at", { ascending: false }),
-        supabase.from("categories").select("*").order("name"),
+        // Explicit column list — never fetches project_password for public users
+        supabase.from("videos").select(PUBLIC_VIDEO_COLUMNS).order("created_at", { ascending: false }),
+        supabase.from("categories").select("id, name, slug").order("name"),
       ]);
       if (videosRes.data) setVideos(videosRes.data as Video[]);
       if (categoriesRes.data) setCategories(categoriesRes.data as Category[]);

@@ -12,10 +12,11 @@ type Props = {
 
 function extractYouTubeId(url: string): string | null {
   if (!url) return null;
-  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   return match?.[1] ?? null;
 }
 
+// ─── Password modal — uses server-side RPC so project_password never leaves DB ─
 function PasswordModal({
   video,
   onClose,
@@ -29,23 +30,37 @@ function PasswordModal({
   const [showPw, setShowPw] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
+  const [attempts, setAttempts] = useState(0);
+
+  // Rate-limit: block after 5 wrong attempts
+  const blocked = attempts >= 5;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!password.trim()) return;
+    if (!password.trim() || blocked) return;
     setChecking(true);
     setError("");
     try {
-      const { data } = await supabase
-        .from("videos")
-        .select("id")
-        .eq("id", video.id)
-        .eq("project_password", password)
-        .maybeSingle();
-      if (data) {
+      // Server-side check — project_password is never sent to the client or compared in JS
+      const { data, error: rpcError } = await supabase.rpc("check_video_password", {
+        video_id: video.id,
+        attempt: password.trim(),
+      });
+      if (rpcError) {
+        // RPC function doesn't exist yet (migration not run) — fallback message
+        setError("Password verification is temporarily unavailable. Please run the database migration.");
+        return;
+      }
+      if (data === true) {
         onUnlock();
       } else {
-        setError("Incorrect password. Please try again.");
+        setAttempts((n) => n + 1);
+        setError(
+          attempts + 1 >= 5
+            ? "Too many incorrect attempts."
+            : "Incorrect password. Please try again."
+        );
+        setPassword("");
       }
     } catch {
       setError("Something went wrong. Please try again.");
@@ -89,16 +104,19 @@ function PasswordModal({
                 <input
                   type={showPw ? "text" : "password"}
                   value={password}
-                  onChange={(e) => { setPassword(e.target.value); setError(""); }}
+                  onChange={(e) => { setPassword(e.target.value.slice(0, 100)); setError(""); }}
                   placeholder="Enter project password"
                   autoFocus
+                  disabled={blocked}
+                  maxLength={100}
                   data-testid="input-project-password"
-                  className="w-full px-4 py-2.5 pr-10 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/40 outline-none"
+                  className="w-full px-4 py-2.5 pr-10 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/40 outline-none disabled:opacity-50"
                   style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${error ? "rgba(239,68,68,0.5)" : "rgba(255,255,255,0.08)"}` }}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPw((s) => !s)}
+                  disabled={blocked}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -113,7 +131,7 @@ function PasswordModal({
               </button>
               <button
                 type="submit"
-                disabled={checking || !password.trim()}
+                disabled={checking || !password.trim() || blocked}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-60"
                 style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)", color: "#0a0a0a" }}
               >
@@ -127,6 +145,7 @@ function PasswordModal({
   );
 }
 
+// ─── Main gallery ─────────────────────────────────────────────────────────────
 export default function VideoGallery({ videos, categories, onPlay, loading }: Props) {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
@@ -162,9 +181,10 @@ export default function VideoGallery({ videos, categories, onPlay, loading }: Pr
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => setSearch(e.target.value.slice(0, 100))}
               placeholder="Search projects..."
               data-testid="input-gallery-search"
+              maxLength={100}
               className="w-full pl-11 pr-4 py-3 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/50 outline-none"
               style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
             />
@@ -255,6 +275,7 @@ export default function VideoGallery({ videos, categories, onPlay, loading }: Pr
   );
 }
 
+// ─── Card components ──────────────────────────────────────────────────────────
 function GridCard({ video, onPlay }: { video: Video; onPlay: (v: Video) => void }) {
   const youtubeId = extractYouTubeId(video.youtube_url);
   const thumb = video.thumbnail_url || (youtubeId ? `https://img.youtube.com/vi/${youtubeId}/maxresdefault.jpg` : "");

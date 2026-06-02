@@ -9,6 +9,8 @@ export const SUPABASE_ANON_KEY =
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Public-safe video shape — project_password is intentionally omitted
+// (column-level DB security + explicit SELECT column lists enforce this)
 export type Video = {
   id: string;
   title: string;
@@ -18,7 +20,8 @@ export type Video = {
   duration: string;
   featured: boolean;
   is_locked: boolean;
-  project_password: string;
+  /** Only present in admin queries. Never returned by public SELECT. */
+  project_password?: string;
   created_at: string;
 };
 
@@ -32,3 +35,10 @@ export type Admin = {
   id: string;
   email: string;
 };
+
+/** Columns safe to return to public (unauthenticated) users */
+export const PUBLIC_VIDEO_COLUMNS =
+  "id, title, youtube_url, thumbnail_url, category, duration, featured, is_locked, created_at" as const;
+
+/** All columns — only for authenticated admin queries */
+export const ADMIN_VIDEO_COLUMNS = "*" as const;
