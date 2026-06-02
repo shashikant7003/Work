@@ -7,8 +7,29 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Edit2, Trash2, LogOut, Video as VideoIcon,
   Star, StarOff, X, Loader2, ExternalLink, Search,
-  Lock, LockOpen, FolderOpen, Eye, EyeOff, Tag
+  Lock, LockOpen, FolderOpen, Eye, EyeOff, Tag, AlertTriangle, Copy, Check
 } from "lucide-react";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Extract a human-readable message from any thrown value, including PostgrestError */
+function extractError(err: unknown): string {
+  if (!err) return "Unknown error";
+  if (typeof err === "object") {
+    const e = err as Record<string, unknown>;
+    // PostgrestError shape: { message, details, hint, code }
+    const parts: string[] = [];
+    if (e.message) parts.push(String(e.message));
+    if (e.details) parts.push(`Details: ${e.details}`);
+    if (e.hint) parts.push(`Hint: ${e.hint}`);
+    if (e.code) parts.push(`Code: ${e.code}`);
+    if (parts.length) return parts.join(" — ");
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type VideoForm = {
   title: string;
@@ -32,25 +53,91 @@ const EMPTY_FORM: VideoForm = {
   project_password: "",
 };
 
-type CategoryForm = {
-  name: string;
-  slug: string;
-};
-
+type CategoryForm = { name: string; slug: string };
 const EMPTY_CAT: CategoryForm = { name: "", slug: "" };
-
 type Tab = "videos" | "categories";
 
+/** Detected schema state — which optional columns exist in the DB */
+type SchemaState = {
+  checked: boolean;
+  videosHasLock: boolean;  // is_locked + project_password columns
+  catsHasSlug: boolean;    // slug column
+};
+
+// ─── Migration banner ─────────────────────────────────────────────────────────
+
+const MIGRATION_SQL = `ALTER TABLE videos
+  ADD COLUMN IF NOT EXISTS is_locked boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS project_password text NOT NULL DEFAULT '';
+
+ALTER TABLE categories
+  ADD COLUMN IF NOT EXISTS slug text NOT NULL DEFAULT '';
+
+UPDATE categories
+SET slug = lower(regexp_replace(regexp_replace(name, '[^a-zA-Z0-9\\s-]', '', 'g'), '\\s+', '-', 'g'))
+WHERE slug = '';`;
+
+function MigrationBanner({ missingVideoCols, missingCatCols }: { missingVideoCols: boolean; missingCatCols: boolean }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard.writeText(MIGRATION_SQL).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+  const missing = [];
+  if (missingVideoCols) missing.push("videos.is_locked, videos.project_password");
+  if (missingCatCols) missing.push("categories.slug");
+
+  return (
+    <div className="rounded-xl mb-6 overflow-hidden"
+      style={{ border: "1px solid rgba(245,158,11,0.3)", background: "rgba(245,158,11,0.06)" }}>
+      <div className="px-5 py-4 flex items-start gap-3">
+        <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-amber-400">Database migration required</p>
+          <p className="text-xs text-amber-400/70 mt-1">
+            Missing columns: <span className="font-mono">{missing.join(", ")}</span>
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Copy the SQL below and run it in your{" "}
+            <a href="https://supabase.com/dashboard/project/xokmlkgpqaliyksxpaaw/sql/new"
+              target="_blank" rel="noopener noreferrer"
+              className="underline text-amber-400/80 hover:text-amber-400">
+              Supabase SQL Editor
+            </a>.
+          </p>
+          <div className="mt-3 relative">
+            <pre className="text-xs font-mono p-3 rounded-lg overflow-x-auto"
+              style={{ background: "rgba(0,0,0,0.4)", color: "rgba(255,255,255,0.7)", whiteSpace: "pre-wrap" }}>
+              {MIGRATION_SQL}
+            </pre>
+            <button onClick={copy}
+              className="absolute top-2 right-2 p-1.5 rounded-md transition-all"
+              style={{ background: "rgba(255,255,255,0.08)" }}>
+              {copied
+                ? <Check className="w-3.5 h-3.5 text-green-400" />
+                : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export default function AdminDashboard() {
-  const { user, isAdmin, loading, signOut } = useAuth();
+  const { user, isAdmin, loading, setIsAdmin, signOut } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
   const [activeTab, setActiveTab] = useState<Tab>("videos");
-
   const [videos, setVideos] = useState<Video[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [fetchingVideos, setFetchingVideos] = useState(true);
+  const [schema, setSchema] = useState<SchemaState>({ checked: false, videosHasLock: false, catsHasSlug: false });
 
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [editingVideo, setEditingVideo] = useState<Video | null>(null);
@@ -66,13 +153,39 @@ export default function AdminDashboard() {
   const [savingCat, setSavingCat] = useState(false);
   const [deletingCatId, setDeletingCatId] = useState<string | null>(null);
 
+  // ── Auth guard ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!loading && !isAdmin) setLocation("/admin");
-  }, [isAdmin, loading, setLocation]);
+    if (!loading && !isAdmin) {
+      // Re-check admin status from Supabase in case page was refreshed
+      supabase.auth.getSession().then(async ({ data: { session } }) => {
+        if (!session?.user?.email) { setLocation("/admin"); return; }
+        const { data } = await supabase.from("admins").select("id").eq("email", session.user.email).maybeSingle();
+        if (data) { setIsAdmin(true); }
+        else setLocation("/admin");
+      });
+    }
+  }, [isAdmin, loading, setLocation, setIsAdmin]);
 
   useEffect(() => {
-    if (isAdmin) fetchData();
+    if (isAdmin) {
+      detectSchema();
+      fetchData();
+    }
   }, [isAdmin]);
+
+  // ── Schema detection ────────────────────────────────────────────────────────
+  async function detectSchema() {
+    // Probe for is_locked by selecting it specifically — PGRST204 = column missing
+    const [videoProbe, catProbe] = await Promise.all([
+      supabase.from("videos").select("is_locked, project_password").limit(0),
+      supabase.from("categories").select("slug").limit(0),
+    ]);
+    setSchema({
+      checked: true,
+      videosHasLock: !videoProbe.error,
+      catsHasSlug: !catProbe.error,
+    });
+  }
 
   async function fetchData() {
     setFetchingVideos(true);
@@ -85,6 +198,7 @@ export default function AdminDashboard() {
     setFetchingVideos(false);
   }
 
+  // ── Video CRUD ──────────────────────────────────────────────────────────────
   function openAddVideo() {
     setEditingVideo(null);
     setForm(EMPTY_FORM);
@@ -97,9 +211,9 @@ export default function AdminDashboard() {
     setForm({
       title: video.title,
       youtube_url: video.youtube_url,
-      thumbnail_url: video.thumbnail_url,
-      category: video.category,
-      duration: video.duration,
+      thumbnail_url: video.thumbnail_url || "",
+      category: video.category || "",
+      duration: video.duration || "",
       featured: video.featured,
       is_locked: video.is_locked ?? false,
       project_password: video.project_password ?? "",
@@ -110,15 +224,28 @@ export default function AdminDashboard() {
 
   async function handleSaveVideo(e: React.FormEvent) {
     e.preventDefault();
-    if (form.is_locked && !form.project_password.trim()) {
-      toast({ title: "Password required", description: "Please set a password for this locked project.", variant: "destructive" });
+
+    if (schema.videosHasLock && form.is_locked && !form.project_password.trim()) {
+      toast({ title: "Password required", description: "Set a password before locking this project.", variant: "destructive" });
       return;
     }
+
     setSaving(true);
-    const payload = {
-      ...form,
-      project_password: form.is_locked ? form.project_password : "",
+
+    // Build payload — only include lock fields if the DB columns exist
+    const basePayload = {
+      title: form.title.trim(),
+      youtube_url: form.youtube_url.trim(),
+      thumbnail_url: form.thumbnail_url.trim(),
+      category: form.category,
+      duration: form.duration.trim(),
+      featured: form.featured,
     };
+
+    const payload = schema.videosHasLock
+      ? { ...basePayload, is_locked: form.is_locked, project_password: form.is_locked ? form.project_password.trim() : "" }
+      : basePayload;
+
     try {
       if (editingVideo) {
         const { error } = await supabase.from("videos").update(payload).eq("id", editingVideo.id);
@@ -132,11 +259,8 @@ export default function AdminDashboard() {
       setShowVideoModal(false);
       fetchData();
     } catch (err: unknown) {
-      toast({
-        title: "Error saving video",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
-      });
+      toast({ title: "Error saving video", description: extractError(err), variant: "destructive" });
+      console.error("Video save error:", err);
     } finally {
       setSaving(false);
     }
@@ -147,7 +271,7 @@ export default function AdminDashboard() {
     setDeletingId(id);
     const { error } = await supabase.from("videos").delete().eq("id", id);
     if (error) {
-      toast({ title: "Error deleting video", description: error.message, variant: "destructive" });
+      toast({ title: "Error deleting video", description: extractError(error), variant: "destructive" });
     } else {
       toast({ title: "Video deleted" });
       setVideos((prev) => prev.filter((v) => v.id !== id));
@@ -157,19 +281,32 @@ export default function AdminDashboard() {
 
   async function toggleFeatured(video: Video) {
     const { error } = await supabase.from("videos").update({ featured: !video.featured }).eq("id", video.id);
-    if (!error) setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, featured: !v.featured } : v)));
+    if (error) {
+      toast({ title: "Error updating video", description: extractError(error), variant: "destructive" });
+    } else {
+      setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, featured: !v.featured } : v)));
+    }
   }
 
   async function toggleLocked(video: Video) {
+    if (!schema.videosHasLock) {
+      toast({ title: "Migration required", description: "Run the database migration first to enable password protection.", variant: "destructive" });
+      return;
+    }
     if (!video.is_locked && !video.project_password) {
       openEditVideo(video);
       toast({ title: "Set a password first", description: "Open the edit form to add a password before locking." });
       return;
     }
     const { error } = await supabase.from("videos").update({ is_locked: !video.is_locked }).eq("id", video.id);
-    if (!error) setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, is_locked: !v.is_locked } : v)));
+    if (error) {
+      toast({ title: "Error updating lock", description: extractError(error), variant: "destructive" });
+    } else {
+      setVideos((prev) => prev.map((v) => (v.id === video.id ? { ...v, is_locked: !v.is_locked } : v)));
+    }
   }
 
+  // ── Category CRUD ───────────────────────────────────────────────────────────
   function openAddCategory() {
     setEditingCat(null);
     setCatForm(EMPTY_CAT);
@@ -178,7 +315,7 @@ export default function AdminDashboard() {
 
   function openEditCategory(cat: Category) {
     setEditingCat(cat);
-    setCatForm({ name: cat.name, slug: cat.slug });
+    setCatForm({ name: cat.name, slug: cat.slug || "" });
     setShowCatModal(true);
   }
 
@@ -186,8 +323,15 @@ export default function AdminDashboard() {
     e.preventDefault();
     if (!catForm.name.trim()) return;
     setSavingCat(true);
-    const slug = catForm.slug.trim() || catForm.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    const payload = { name: catForm.name.trim(), slug };
+
+    const autoSlug = catForm.name.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    const slug = (catForm.slug.trim() || autoSlug);
+
+    // Only include slug if the DB column exists
+    const payload = schema.catsHasSlug
+      ? { name: catForm.name.trim(), slug }
+      : { name: catForm.name.trim() };
+
     try {
       if (editingCat) {
         const { error } = await supabase.from("categories").update(payload).eq("id", editingCat.id);
@@ -202,11 +346,8 @@ export default function AdminDashboard() {
       }
       setShowCatModal(false);
     } catch (err: unknown) {
-      toast({
-        title: "Error saving category",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
-      });
+      toast({ title: "Error saving category", description: extractError(err), variant: "destructive" });
+      console.error("Category save error:", err);
     } finally {
       setSavingCat(false);
     }
@@ -221,7 +362,7 @@ export default function AdminDashboard() {
     setDeletingCatId(id);
     const { error } = await supabase.from("categories").delete().eq("id", id);
     if (error) {
-      toast({ title: "Error deleting category", description: error.message, variant: "destructive" });
+      toast({ title: "Error deleting category", description: extractError(error), variant: "destructive" });
     } else {
       toast({ title: "Category deleted" });
       setCategories((prev) => prev.filter((c) => c.id !== id));
@@ -237,7 +378,7 @@ export default function AdminDashboard() {
   const filteredVideos = videos.filter(
     (v) =>
       v.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.category.toLowerCase().includes(searchTerm.toLowerCase())
+      (v.category || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading) {
@@ -250,8 +391,11 @@ export default function AdminDashboard() {
 
   if (!isAdmin) return null;
 
+  const needsMigration = schema.checked && (!schema.videosHasLock || !schema.catsHasSlug);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
+      {/* Header */}
       <header className="glass-card border-b border-border sticky top-0 z-40 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -270,11 +414,8 @@ export default function AdminDashboard() {
               data-testid="link-view-portfolio">
               <ExternalLink className="w-4 h-4" /> View Portfolio
             </a>
-            <button
-              onClick={handleSignOut}
-              data-testid="button-sign-out"
-              className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg transition-colors text-muted-foreground hover:text-foreground glass-card"
-            >
+            <button onClick={handleSignOut} data-testid="button-sign-out"
+              className="flex items-center gap-2 text-sm px-3 py-2 rounded-lg transition-colors text-muted-foreground hover:text-foreground glass-card">
               <LogOut className="w-4 h-4" /> Sign Out
             </button>
           </div>
@@ -282,12 +423,20 @@ export default function AdminDashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
+        {/* Migration banner */}
+        {needsMigration && (
+          <MigrationBanner
+            missingVideoCols={!schema.videosHasLock}
+            missingCatCols={!schema.catsHasSlug}
+          />
+        )}
+
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           {[
             { label: "Total Videos", value: videos.length },
             { label: "Featured", value: videos.filter((v) => v.featured).length },
-            { label: "Locked", value: videos.filter((v) => v.is_locked).length },
+            { label: "Locked", value: schema.videosHasLock ? videos.filter((v) => v.is_locked).length : "—" },
             { label: "Categories", value: categories.length },
           ].map((stat) => (
             <div key={stat.label} className="glass-card rounded-xl p-5 gradient-border">
@@ -303,17 +452,13 @@ export default function AdminDashboard() {
             { key: "videos", icon: VideoIcon, label: "Videos" },
             { key: "categories", icon: Tag, label: "Categories" },
           ] as const).map(({ key, icon: Icon, label }) => (
-            <button
-              key={key}
-              onClick={() => setActiveTab(key)}
-              data-testid={`tab-${key}`}
+            <button key={key} onClick={() => setActiveTab(key)} data-testid={`tab-${key}`}
               className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all"
               style={
                 activeTab === key
                   ? { background: "linear-gradient(135deg, #f5c842, #d4a017)", color: "#0a0a0a" }
                   : { color: "rgba(255,255,255,0.5)" }
-              }
-            >
+              }>
               <Icon className="w-4 h-4" /> {label}
             </button>
           ))}
@@ -326,28 +471,19 @@ export default function AdminDashboard() {
               <div className="flex items-center gap-3">
                 <VideoIcon className="w-5 h-5" style={{ color: "var(--gold)" }} />
                 <h2 className="font-semibold text-foreground">Videos</h2>
-                <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5">
-                  {filteredVideos.length}
-                </span>
+                <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5">{filteredVideos.length}</span>
               </div>
               <div className="flex items-center gap-3 w-full sm:w-auto">
                 <div className="relative flex-1 sm:w-64">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <input
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search videos..."
-                    data-testid="input-search"
+                  <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search videos..." data-testid="input-search"
                     className="w-full pl-9 pr-4 py-2 rounded-lg text-sm text-foreground placeholder:text-muted-foreground/50 outline-none"
-                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
-                  />
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }} />
                 </div>
-                <button
-                  onClick={openAddVideo}
-                  data-testid="button-add-video"
+                <button onClick={openAddVideo} data-testid="button-add-video"
                   className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all"
-                  style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)", color: "#0a0a0a" }}
-                >
+                  style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)", color: "#0a0a0a" }}>
                   <Plus className="w-4 h-4" /> Add Video
                 </button>
               </div>
@@ -421,9 +557,7 @@ export default function AdminDashboard() {
                             <button onClick={() => handleDeleteVideo(video.id)} disabled={deletingId === video.id}
                               data-testid={`button-delete-${video.id}`}
                               className="p-2 rounded-lg text-muted-foreground hover:text-red-400 glass-card transition-all disabled:opacity-50">
-                              {deletingId === video.id
-                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                : <Trash2 className="w-3.5 h-3.5" />}
+                              {deletingId === video.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                             </button>
                           </div>
                         </td>
@@ -445,12 +579,9 @@ export default function AdminDashboard() {
                 <h2 className="font-semibold text-foreground">Categories</h2>
                 <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5">{categories.length}</span>
               </div>
-              <button
-                onClick={openAddCategory}
-                data-testid="button-add-category"
+              <button onClick={openAddCategory} data-testid="button-add-category"
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
-                style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)", color: "#0a0a0a" }}
-              >
+                style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)", color: "#0a0a0a" }}>
                 <Plus className="w-4 h-4" /> Add Category
               </button>
             </div>
@@ -473,7 +604,9 @@ export default function AdminDashboard() {
                         </div>
                         <div>
                           <p className="font-medium text-foreground text-sm">{cat.name}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">/{cat.slug} · {videoCount} video{videoCount !== 1 ? "s" : ""}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {cat.slug ? `/${cat.slug} · ` : ""}{videoCount} video{videoCount !== 1 ? "s" : ""}
+                          </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -484,9 +617,7 @@ export default function AdminDashboard() {
                         <button onClick={() => handleDeleteCategory(cat.id, cat.name)} disabled={deletingCatId === cat.id}
                           data-testid={`button-delete-cat-${cat.id}`}
                           className="p-2 rounded-lg text-muted-foreground hover:text-red-400 glass-card transition-all disabled:opacity-50">
-                          {deletingCatId === cat.id
-                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            : <Trash2 className="w-3.5 h-3.5" />}
+                          {deletingCatId === cat.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                         </button>
                       </div>
                     </div>
@@ -511,17 +642,17 @@ export default function AdminDashboard() {
               </button>
             </div>
             <form onSubmit={handleSaveVideo} className="p-6 space-y-4" data-testid="form-video">
-              {[
+              {([
                 { label: "Title", key: "title", type: "text", required: true, placeholder: "Wedding Highlights — John & Jane" },
                 { label: "YouTube URL", key: "youtube_url", type: "url", required: true, placeholder: "https://youtube.com/watch?v=..." },
                 { label: "Thumbnail URL", key: "thumbnail_url", type: "url", required: false, placeholder: "https://..." },
                 { label: "Duration", key: "duration", type: "text", required: false, placeholder: "3:45" },
-              ].map(({ label, key, type, required, placeholder }) => (
+              ] as const).map(({ label, key, type, required, placeholder }) => (
                 <div key={key}>
                   <label className="text-sm font-medium text-muted-foreground mb-1.5 block">{label}</label>
                   <input
                     type={type}
-                    value={form[key as keyof VideoForm] as string}
+                    value={form[key]}
                     onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
                     required={required}
                     placeholder={placeholder}
@@ -534,13 +665,10 @@ export default function AdminDashboard() {
 
               <div>
                 <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Category</label>
-                <select
-                  value={form.category}
-                  onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                <select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
                   data-testid="select-category"
                   className="w-full px-4 py-2.5 rounded-xl text-sm text-foreground outline-none"
-                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
-                >
+                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
                   <option value="">Select category</option>
                   {categories.map((c) => (
                     <option key={c.id} value={c.name}>{c.name}</option>
@@ -562,46 +690,57 @@ export default function AdminDashboard() {
                 <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">Mark as Featured</span>
               </label>
 
-              {/* Lock toggle */}
-              <div className="rounded-xl p-4 space-y-4" style={{ background: "rgba(245,200,66,0.04)", border: "1px solid rgba(245,200,66,0.12)" }}>
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <div className="relative">
-                    <input type="checkbox" checked={form.is_locked}
-                      onChange={(e) => setForm((f) => ({ ...f, is_locked: e.target.checked }))}
-                      data-testid="checkbox-locked" className="sr-only" />
-                    <div className={`w-10 h-6 rounded-full transition-all ${form.is_locked ? "" : "bg-muted"}`}
-                      style={form.is_locked ? { background: "linear-gradient(135deg, #f5c842, #d4a017)" } : {}}>
-                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${form.is_locked ? "left-5" : "left-1"}`} />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Lock className="w-3.5 h-3.5" style={{ color: form.is_locked ? "var(--gold)" : "rgba(255,255,255,0.4)" }} />
-                    <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">Password-protect this project</span>
-                  </div>
-                </label>
-
-                {form.is_locked && (
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Project Password <span className="text-red-400">*</span></label>
+              {/* Lock toggle — only shown when schema supports it */}
+              {schema.videosHasLock && (
+                <div className="rounded-xl p-4 space-y-4" style={{ background: "rgba(245,200,66,0.04)", border: "1px solid rgba(245,200,66,0.12)" }}>
+                  <label className="flex items-center gap-3 cursor-pointer group">
                     <div className="relative">
-                      <input
-                        type={showPassword ? "text" : "password"}
-                        value={form.project_password}
-                        onChange={(e) => setForm((f) => ({ ...f, project_password: e.target.value }))}
-                        placeholder="Set a password for this project"
-                        data-testid="input-project-password"
-                        className="w-full px-4 py-2.5 pr-10 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/40 outline-none"
-                        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
-                      />
-                      <button type="button" onClick={() => setShowPassword((s) => !s)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
+                      <input type="checkbox" checked={form.is_locked}
+                        onChange={(e) => setForm((f) => ({ ...f, is_locked: e.target.checked }))}
+                        data-testid="checkbox-locked" className="sr-only" />
+                      <div className={`w-10 h-6 rounded-full transition-all ${form.is_locked ? "" : "bg-muted"}`}
+                        style={form.is_locked ? { background: "linear-gradient(135deg, #f5c842, #d4a017)" } : {}}>
+                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${form.is_locked ? "left-5" : "left-1"}`} />
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1.5">Visitors must enter this password to watch the video.</p>
-                  </div>
-                )}
-              </div>
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-3.5 h-3.5" style={{ color: form.is_locked ? "var(--gold)" : "rgba(255,255,255,0.4)" }} />
+                      <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">Password-protect this project</span>
+                    </div>
+                  </label>
+
+                  {form.is_locked && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Project Password <span className="text-red-400">*</span></label>
+                      <div className="relative">
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={form.project_password}
+                          onChange={(e) => setForm((f) => ({ ...f, project_password: e.target.value }))}
+                          placeholder="Set a password for this project"
+                          data-testid="input-project-password"
+                          className="w-full px-4 py-2.5 pr-10 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/40 outline-none"
+                          style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+                        />
+                        <button type="button" onClick={() => setShowPassword((s) => !s)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1.5">Visitors must enter this password to watch the video.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Show placeholder if migration not done yet */}
+              {!schema.videosHasLock && schema.checked && (
+                <div className="rounded-xl p-3 flex items-center gap-2 text-xs text-amber-400/70"
+                  style={{ background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.15)" }}>
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                  Password protection unavailable — run the database migration first.
+                </div>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setShowVideoModal(false)} data-testid="button-cancel"
@@ -634,42 +773,37 @@ export default function AdminDashboard() {
             <form onSubmit={handleSaveCategory} className="p-6 space-y-4" data-testid="form-category">
               <div>
                 <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Name <span className="text-red-400">*</span></label>
-                <input
-                  type="text"
-                  value={catForm.name}
+                <input type="text" value={catForm.name}
                   onChange={(e) => setCatForm((f) => ({
                     ...f,
                     name: e.target.value,
                     slug: f.slug || e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""),
                   }))}
-                  required
-                  placeholder="Wedding Films"
-                  data-testid="input-cat-name"
-                  autoFocus
+                  required placeholder="Wedding Films" data-testid="input-cat-name" autoFocus
                   className="w-full px-4 py-2.5 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/40 outline-none"
                   style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
                 />
               </div>
-              <div>
-                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Slug</label>
-                <input
-                  type="text"
-                  value={catForm.slug}
-                  onChange={(e) => setCatForm((f) => ({ ...f, slug: e.target.value }))}
-                  placeholder="wedding-films"
-                  data-testid="input-cat-slug"
-                  className="w-full px-4 py-2.5 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/40 outline-none"
-                  style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
-                />
-                <p className="text-xs text-muted-foreground mt-1">Auto-generated from name if left blank.</p>
-              </div>
+
+              {schema.catsHasSlug && (
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Slug</label>
+                  <input type="text" value={catForm.slug}
+                    onChange={(e) => setCatForm((f) => ({ ...f, slug: e.target.value }))}
+                    placeholder="wedding-films" data-testid="input-cat-slug"
+                    className="w-full px-4 py-2.5 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/40 outline-none"
+                    style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Auto-generated from name if left blank.</p>
+                </div>
+              )}
+
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setShowCatModal(false)}
                   className="flex-1 py-2.5 rounded-xl text-sm font-medium glass-card text-muted-foreground hover:text-foreground transition-all">
                   Cancel
                 </button>
-                <button type="submit" disabled={savingCat}
-                  data-testid="button-save-cat"
+                <button type="submit" disabled={savingCat} data-testid="button-save-cat"
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-60"
                   style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)", color: "#0a0a0a" }}>
                   {savingCat ? <><Loader2 className="w-4 h-4 animate-spin" />Saving...</> : (editingCat ? "Save Changes" : "Add Category")}
