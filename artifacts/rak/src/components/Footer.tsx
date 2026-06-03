@@ -10,7 +10,7 @@ export default function Footer() {
             style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)" }}>
             <span className="text-xs font-black text-black">C</span>
           </div>
-          <span className="font-bold gold-text">RAK</span>
+          <span className="font-bold gold-text">ChronoEdits</span>
         </div>
 
         <p className="text-xs text-muted-foreground flex items-center gap-1.5">

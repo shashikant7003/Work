@@ -69,9 +69,9 @@ export default function AboutSection() {
               <div className="flex items-center gap-3 mt-4">
                 <div className="w-8 h-8 rounded-full flex items-center justify-center"
                   style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)" }}>
-                  <span className="text-xs font-black text-black">R</span>
+                  <span className="text-xs font-black text-black">C</span>
                 </div>
-                <span className="text-sm font-semibold gold-text">RAK</span>
+                <span className="text-sm font-semibold gold-text">ChronoEdits</span>
               </div>
             </div>
           </div>
