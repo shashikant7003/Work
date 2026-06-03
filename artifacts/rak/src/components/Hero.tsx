@@ -36,7 +36,7 @@ export default function Hero({ onExplore }: HeroProps) {
           <br />
           <span className="gold-text">Beautiful</span>
           <br />
-          <span className="text-foreground">T</span>
+          <span className="text-foreground">Memories</span>
         </h1>
 
         <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-12 leading-relaxed font-light">I'm  — a video editor specializing in cinematic storytelling, wedding films, and branded content that leaves an impression.</p>
