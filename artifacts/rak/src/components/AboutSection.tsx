@@ -7,7 +7,7 @@ const skills = [
   { icon: Zap, label: "Fast Turnaround", desc: "Meeting deadlines without compromise" },
 ];
 
-const tools = ["Adobe Premiere Pro", "DaVinci Resolve", "After Effects", "Final Cut Pro", "Photoshop", "Audition"];
+const tools = ["Adobe Premiere Pro", "After Effects", "Final Cut Pro", "Photoshop", "Audition"];
 
 export default function AboutSection() {
   return (
