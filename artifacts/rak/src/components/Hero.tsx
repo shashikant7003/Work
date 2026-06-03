@@ -27,7 +27,7 @@ export default function Hero({ onExplore }: HeroProps) {
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-8 text-xs font-medium"
           style={{ background: "var(--gold-dim)", border: "1px solid rgba(245,200,66,0.2)", color: "var(--gold)" }}>
           <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--gold)" }} />
-          Beautiful
+          Premium Video Editor
         </div>
 
         {/* Main heading */}
@@ -36,7 +36,7 @@ export default function Hero({ onExplore }: HeroProps) {
           <br />
           <span className="gold-text">Stories</span>
           <br />
-          <span className="text-foreground">T</span>
+          <span className="text-foreground">Through Film</span>
         </h1>
 
         <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-12 leading-relaxed font-light">
