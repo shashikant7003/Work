@@ -16,29 +16,27 @@ export default function Hero({ onExplore }: HeroProps) {
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full blur-3xl opacity-[0.03]"
           style={{ background: "radial-gradient(circle, #ffffff, transparent 70%)" }} />
       </div>
-
       {/* Grid lines overlay */}
       <div className="absolute inset-0 opacity-[0.03]"
         style={{
           backgroundImage: "linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)",
           backgroundSize: "80px 80px",
         }} />
-
       <div className="relative z-10 text-center px-6 max-w-5xl mx-auto">
         {/* Badge */}
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-8 text-xs font-medium"
           style={{ background: "var(--gold-dim)", border: "1px solid rgba(245,200,66,0.2)", color: "var(--gold)" }}>
           <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--gold)" }} />
-          Premium Video Editor
+          Beautiful
         </div>
 
         {/* Main heading */}
         <h1 className="text-6xl sm:text-7xl md:text-8xl lg:text-9xl font-black tracking-tighter leading-none mb-6">
-          <span className="text-foreground">Crafting</span>
+          <span className="text-foreground">Turning Chaos into</span>
           <br />
           <span className="gold-text">Stories</span>
           <br />
-          <span className="text-foreground">Through Film</span>
+          <span className="text-foreground">T</span>
         </h1>
 
         <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-12 leading-relaxed font-light">
@@ -80,7 +78,6 @@ export default function Hero({ onExplore }: HeroProps) {
           ))}
         </div>
       </div>
-
       {/* Scroll indicator */}
       <button
         onClick={onExplore}

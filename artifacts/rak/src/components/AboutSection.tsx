@@ -26,12 +26,8 @@ export default function AboutSection() {
               Turning raw footage into
               <span className="gold-text"> cinematic moments</span>
             </h2>
-            <p className="text-muted-foreground leading-relaxed mb-6">
-              With over 5 years of experience in professional video editing, I specialize in 
-              creating emotionally resonant stories that captivate audiences. From wedding films 
-              that make families cry to branded content that converts — every project receives 
-              my full creative dedication.
-            </p>
+            <p className="text-muted-foreground leading-relaxed mb-6">1 Year of Turning Ideas into High-Impact Visuals
+            Over the past year, I’ve been obsessed with one thing: making content that grabs attention and doesn't let go. From sharp pacing and seamless transitions to clean color grading and sound design, I transform raw footage into engaging stories. Whether it’s a fast-paced vlog or a premium brand video, I build timelines that connect with people.</p>
             <p className="text-muted-foreground leading-relaxed mb-10">
               My approach combines technical precision with artistic vision, ensuring every edit 
               serves the story and every color grade enhances the mood. I believe great editing 
