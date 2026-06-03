@@ -8,7 +8,7 @@ export default function Footer() {
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center"
             style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)" }}>
-            <span className="text-xs font-black text-black">R</span>
+            <span className="text-xs font-black text-black">C</span>
           </div>
           <span className="font-bold gold-text">RAK</span>
         </div>
