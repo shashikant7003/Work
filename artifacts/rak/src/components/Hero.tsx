@@ -32,7 +32,7 @@ export default function Hero({ onExplore }: HeroProps) {
 
         {/* Main heading */}
         <h1 className="text-6xl sm:text-7xl md:text-8xl lg:text-9xl font-black tracking-tighter leading-none mb-6">
-          <span className="text-foreground">Turning Chaos into</span>
+          <span className="text-foreground">Turning Chaos Into</span>
           <br />
           <span className="gold-text">Beautiful</span>
           <br />
