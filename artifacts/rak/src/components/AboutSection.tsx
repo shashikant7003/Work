@@ -18,9 +18,7 @@ export default function AboutSection() {
           <div>
             <div className="flex items-center gap-2 mb-4">
               <div className="h-px flex-1 max-w-[40px]" style={{ background: "var(--gold)" }} />
-              <span className="text-xs font-medium uppercase tracking-widest" style={{ color: "var(--gold)" }}>
-                About RAK
-              </span>
+              <span className="text-xs font-medium uppercase tracking-widest" style={{ color: "var(--gold)" }}>About</span>
             </div>
             <h2 className="text-4xl font-black text-foreground tracking-tight mb-6 leading-tight">
               Turning raw footage into

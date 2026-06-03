@@ -39,9 +39,9 @@ export default function Navbar() {
         <Link href="/" className="flex items-center gap-2 group" data-testid="link-home">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center gold-glow transition-transform group-hover:scale-105"
             style={{ background: "linear-gradient(135deg, #f5c842, #d4a017)" }}>
-            <span className="text-lg font-black text-black">R</span>
+            <span className="text-lg font-black text-black">C</span>
           </div>
-          <span className="text-lg font-black tracking-tight gold-text">RAK</span>
+          <span className="text-lg font-black tracking-tight gold-text">ChronoEdits</span>
         </Link>
 
         {/* Desktop links */}
@@ -73,7 +73,6 @@ export default function Navbar() {
           {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
       </div>
-
       {/* Mobile menu */}
       {mobileOpen && (
         <div className="md:hidden glass-card border-t border-border px-6 py-4 space-y-3">

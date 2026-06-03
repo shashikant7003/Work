@@ -34,15 +34,12 @@ export default function Hero({ onExplore }: HeroProps) {
         <h1 className="text-6xl sm:text-7xl md:text-8xl lg:text-9xl font-black tracking-tighter leading-none mb-6">
           <span className="text-foreground">Turning Chaos into</span>
           <br />
-          <span className="gold-text">Stories</span>
+          <span className="gold-text">Beautiful</span>
           <br />
-          <span className="text-foreground">Through Film</span>
+          <span className="text-foreground">T</span>
         </h1>
 
-        <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-12 leading-relaxed font-light">
-          I'm RAK — a video editor specializing in cinematic storytelling, 
-          wedding films, and branded content that leaves an impression.
-        </p>
+        <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-12 leading-relaxed font-light">I'm  — a video editor specializing in cinematic storytelling, wedding films, and branded content that leaves an impression.</p>
 
         {/* CTA Buttons */}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
